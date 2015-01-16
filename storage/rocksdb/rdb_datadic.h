@@ -137,11 +137,8 @@ public:
                    uchar *pack_buffer,
                    const uchar *record, 
                    uchar *packed_tuple, 
-                   uchar *unpack_info, 
-                   int *unpack_info_len,
                    uint n_key_parts=0);
-  int unpack_record(TABLE *table, uchar *buf, const rocksdb::Slice *packed_key,
-                    const rocksdb::Slice *unpack_info);
+  int unpack_record(TABLE *table, uchar *buf, const rocksdb::Slice *packed_key);
 
   /* Get the key that is the "infimum" for this index */
   inline void get_infimum_key(uchar *key, uint *size)
@@ -271,16 +268,11 @@ private:
 
   /* Maximum length of the mem-comparable form. */
   uint maxlength;
-  
-  /* Length of the unpack_data */
-  uint unpack_data_len;
 };
 
 
-typedef void (*make_unpack_info_t) (Field_pack_info *fpi, Field *field, uchar *dst);
 typedef int (*index_field_unpack_t)(Field_pack_info *fpi, Field *field,
-                                    Stream_reader *reader,
-                                    const uchar *unpack_info);
+                                    Stream_reader *reader);
 
 typedef int (*index_field_skip_t)(Field_pack_info *fpi, Stream_reader *reader);
 
@@ -297,10 +289,6 @@ public:
   /* Length of mem-comparable image of the field, in bytes */
   int max_image_len;
   
-  /* Length of image in the unpack data */
-  int unpack_data_len;
-  int unpack_data_offset;
-
   /* Offset of field data in table->record[i] from field->ptr. */
   int field_data_offset;
   
@@ -312,14 +300,6 @@ public:
   const CHARSET_INFO *varchar_charset;
 
   index_field_pack_t pack_func;
-
-  /*
-    Pack function is assumed to be:
-     - store NULL-byte, if needed
-     - call field->make_sort_key();
-    If you neeed to unpack, you should also call
-  */
-  make_unpack_info_t make_unpack_info_func;
 
   /*
     This function takes

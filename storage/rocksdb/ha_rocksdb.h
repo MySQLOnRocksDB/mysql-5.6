@@ -133,7 +133,6 @@ class ha_rocksdb: public handler
   // ^^ todo: change it to 'char*'? TODO: ^ can we join this with last_rowkey?
 
   uchar *sec_key_packed_tuple;
-  uchar *sec_key_tails;
   
   /*
     Temporary space for packing VARCHARs (we provide it to
