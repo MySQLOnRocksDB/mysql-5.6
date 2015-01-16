@@ -45,8 +45,11 @@ class Stream_reader
 public:
   Stream_reader(const std::string &str)
   {
-    ptr= &str.at(0);
     len= str.length();
+    if (len)
+      ptr= &str.at(0);
+    else
+      ptr= NULL;
   }
 
   Stream_reader(const rocksdb::Slice *slice)
@@ -227,6 +230,9 @@ public:
   }
 
   rocksdb::ColumnFamilyHandle *get_cf() { return cf_handle; }
+  
+  /* Check if keypart #kp can be unpacked from index tuple */
+  bool can_unpack(uint kp) const;
   
 private:
   
