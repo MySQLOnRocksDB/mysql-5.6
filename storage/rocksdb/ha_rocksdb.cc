@@ -675,7 +675,7 @@ public:
 
   /* The following is not needed by RocksDB, but conceptually should be here: */
   static ulong get_hashnr(const char *key, size_t key_len);
-  const char* Name() const { return "RocksDB_SE_v3.1"; }
+  const char* Name() const { return "RocksDB_SE_v3.2"; }
 
   //TODO: advanced funcs:
   // - FindShortestSeparator
@@ -692,7 +692,7 @@ class Reverse_comparator : public rocksdb::Comparator
   {
     return -bytewise_compare(a,b);
   }
-  const char* Name() const { return "rev:RocksDB_SE_v3.1"; }
+  const char* Name() const { return "rev:RocksDB_SE_v3.2"; }
   void FindShortestSeparator(std::string* start, const rocksdb::Slice& limit) const {}
   void FindShortSuccessor(std::string* key) const {}
 };
@@ -1336,7 +1336,7 @@ ha_rocksdb::ha_rocksdb(handlerton *hton, TABLE_SHARE *table_arg)
     key_descr(NULL), 
     pk_can_be_decoded(false),
     pk_tuple(NULL), pk_packed_tuple(NULL), 
-    sec_key_packed_tuple(NULL), sec_key_tails(NULL),
+    sec_key_packed_tuple(NULL),
     pack_buffer(NULL),
     lock_rows(FALSE),
     keyread_only(FALSE),
@@ -1370,6 +1370,10 @@ void ha_rocksdb::convert_record_to_storage_format(rocksdb::Slice *packed_rec)
   
   for (uint i=0; i < table->s->fields; i++)
   {
+    /* Don't pack decode-able PK key parts */
+    if (field_enc[i].skip)
+      continue;
+
     Field *field= table->field[i];
     if (field_enc[i].maybe_null())
     {
@@ -1438,7 +1442,9 @@ int ha_rocksdb::convert_record_from_storage_format(rocksdb::Slice *slice,
 
 /*
   Unpack the record in this->retrieved_record from storage format into 
-  buf (which can be table->record[0] or table->record[1])
+  buf (which can be table->record[0] or table->record[1]).
+
+  psergey-todo: this->last_rowkey has a part of the data.
 
   If the table has blobs, the unpacked data in buf may keep pointers to the
   data in this->retrieved_record.
@@ -1453,12 +1459,23 @@ int ha_rocksdb::convert_record_from_storage_format(uchar * buf)
   Stream_reader reader(retrieved_record);
   my_ptrdiff_t ptr_diff= buf - table->record[0];
   
-  const char *null_bytes;
-  if (!(null_bytes= reader.read(null_bytes_in_rec)))
+  /*
+    Decode PK fields from the key
+  */
+  rocksdb::Slice rowkey_slice(last_rowkey.ptr(), last_rowkey.length());
+  if (pk_descr->unpack_record(table, buf, &rowkey_slice))
     return HA_ERR_INTERNAL_ERROR;
-
+  
+  /* Other fields are decoded from the value */
+  const char *null_bytes;
+  if (null_bytes_in_rec && !(null_bytes= reader.read(null_bytes_in_rec)))
+    return HA_ERR_INTERNAL_ERROR;
+  
   for (uint i=0; i < table->s->fields; i++)
   {
+    if (field_enc[i].skip)
+      continue;
+
     Field *field= table->field[i];
 
     int isNull = field_enc[i].maybe_null() &&
@@ -1579,6 +1596,29 @@ void ha_rocksdb::setup_field_converters()
   for (i= 0; i < table->s->fields; i++)
   {
     Field *field= table->field[i];
+    field_enc[i].skip= false;
+
+    /*
+      Check if this field is 
+      - a part of primary key, and
+      - it can be decoded back from its key image.
+      If both hold, we don't need to store this field in the value part of
+      RocksDB's key-value pair.
+    */
+    if (field->part_of_key.is_set(table->s->primary_key))
+    {
+      KEY *pk_info= &table->key_info[table->s->primary_key];
+      for (uint kp= 0; kp < pk_info->user_defined_key_parts; kp++)
+      {
+        if (field->field_index + 1 == pk_info->key_part[kp].fieldnr)
+        {
+          if (pk_descr->can_unpack(kp))
+            field_enc[i].skip= true; /* Don't store */
+          break;
+        }
+      }
+    }
+
     field_enc[i].field_type= field->real_type();
 
     if (field->real_maybe_null())
@@ -1677,7 +1717,6 @@ int ha_rocksdb::open(const char *name, int mode, uint test_if_locked)
 
   if (!(sec_key_packed_tuple= (uchar*)my_malloc(max_packed_sec_key_len,
                                                 MYF(0))) ||
-      !((sec_key_tails= (uchar*)my_malloc(max_packed_sec_key_len, MYF(0)))) ||
       !((pack_buffer=(uchar*)my_malloc(max_packed_sec_key_len, MYF(0)))))
     DBUG_RETURN(HA_ERR_INTERNAL_ERROR);
 
@@ -1709,10 +1748,6 @@ int ha_rocksdb::close(void)
   if (sec_key_packed_tuple)
     my_free(sec_key_packed_tuple);
   sec_key_packed_tuple= NULL;
-  
-  if (sec_key_tails)
-    my_free(sec_key_tails);
-  sec_key_tails= NULL;
   
   if (pack_buffer)
     my_free(pack_buffer);
@@ -2037,8 +2072,7 @@ int ha_rocksdb::secondary_index_read(int keyno, uchar *buf)
 
       if (keyread_only && !lock_rows)
       {
-        rocksdb::Slice value= scan_it->value();
-        if (key_descr[keyno]->unpack_record(table, buf, &key, &value))
+        if (key_descr[keyno]->unpack_record(table, buf, &key))
           return HA_ERR_INTERNAL_ERROR;
         rc= 0;
       }
@@ -2322,8 +2356,7 @@ int ha_rocksdb::index_read_map(uchar *buf, const uchar *key,
       if (keyread_only && !lock_rows)
       {
         /* Get the key columns and primary key value */
-        rocksdb::Slice value= scan_it->value();
-        if (kd->unpack_record(table, buf, &rkey, &value))
+        if (kd->unpack_record(table, buf, &rkey))
           rc= HA_ERR_INTERNAL_ERROR;
         else
           rc= 0;
@@ -2428,7 +2461,7 @@ int ha_rocksdb::check(THD* thd, HA_CHECK_OPT* check_opt)
         }
         /* Check if we get the same PK value */
         uint packed_size= pk_descr->pack_record(table, pack_buffer, table->record[0],
-                                                pk_packed_tuple, NULL, NULL);
+                                                pk_packed_tuple);
         if (packed_size != rowkey_copy.length() ||
             memcmp(pk_packed_tuple, rowkey_copy.ptr(), packed_size))
         {
@@ -2437,11 +2470,9 @@ int ha_rocksdb::check(THD* thd, HA_CHECK_OPT* check_opt)
         }
 
         /* Check if we get the same secondary key value */
-        int tail_size;
         packed_size= key_descr[keyno]->pack_record(table, pack_buffer, 
                                                    table->record[0], 
-                                                   sec_key_packed_tuple,
-                                                   sec_key_tails, &tail_size);
+                                                   sec_key_packed_tuple);
         if (packed_size != sec_key_copy.length() || 
             memcmp(sec_key_packed_tuple, sec_key_copy.ptr(), packed_size))
         {
@@ -2815,7 +2846,7 @@ int ha_rocksdb::write_row(uchar *buf)
 
   /* Get a packed primary key value */
   uint packed_size= pk_descr->pack_record(table, pack_buffer, buf, 
-                                          pk_packed_tuple, NULL, NULL);
+                                          pk_packed_tuple);
   rocksdb::Slice key_slice((const char*)pk_packed_tuple, packed_size);
 
   Rdb_transaction *trx= get_or_create_trx(table->in_use);
@@ -2867,16 +2898,14 @@ int ha_rocksdb::write_row(uchar *buf)
     if (i != table->s->primary_key)
     {
       int packed_size;
-      int tail_size;
 
       packed_size= key_descr[i]->pack_record(table, pack_buffer, buf, 
-                                             sec_key_packed_tuple,
-                                             sec_key_tails, &tail_size);
+                                             sec_key_packed_tuple);
 
       rocksdb::Slice secondary_key_slice((char*)sec_key_packed_tuple, 
                                          packed_size);
-      rocksdb::Slice value_slice((const char*)sec_key_tails, tail_size);
-      trx->changes.Put(key_descr[i], secondary_key_slice, value_slice);
+      rocksdb::Slice empty_slice;
+      trx->changes.Put(key_descr[i], secondary_key_slice, empty_slice);
       trx->n_writes++;
     }
   }
@@ -3129,8 +3158,7 @@ int ha_rocksdb::delete_row(const uchar *buf)
     {
       int packed_size;
       packed_size= key_descr[i]->pack_record(table, pack_buffer, 
-                                             buf, sec_key_packed_tuple,
-                                             NULL, NULL);
+                                             buf, sec_key_packed_tuple);
       rocksdb::Slice secondary_key_slice((char*)sec_key_packed_tuple, 
                                          packed_size);
       trx->changes.Delete(key_descr[i], secondary_key_slice);
@@ -3225,8 +3253,7 @@ int ha_rocksdb::update_row(const uchar *old_data, uchar *new_data)
 
   /* Get a rowkey fo the new record */
   uint packed_size= pk_descr->pack_record(table, pack_buffer, new_data, 
-                                          pk_packed_tuple,
-                                          NULL, NULL);
+                                          pk_packed_tuple);
 
   rocksdb::Slice key_slice((const char*)pk_packed_tuple, packed_size);
   Rdb_transaction *trx= get_or_create_trx(table->in_use);
@@ -3275,14 +3302,12 @@ int ha_rocksdb::update_row(const uchar *old_data, uchar *new_data)
     if (i != table->s->primary_key)
     {
       int packed_size;
-      int tail_size;
       // TODO: compare old/new fields, and update only when actually necessary.
 
       // First, a Delete()
       {
         packed_size= key_descr[i]->pack_record(table, pack_buffer, old_data,
-                                               sec_key_packed_tuple, 
-                                               NULL, NULL);
+                                               sec_key_packed_tuple);
         rocksdb::Slice secondary_key_slice((char*)sec_key_packed_tuple, 
                                            packed_size);
         trx->changes.Delete(key_descr[i], secondary_key_slice);
@@ -3291,12 +3316,11 @@ int ha_rocksdb::update_row(const uchar *old_data, uchar *new_data)
       // Then, Put().
       {
         packed_size= key_descr[i]->pack_record(table, pack_buffer, new_data,
-                                               sec_key_packed_tuple,
-                                               sec_key_tails, &tail_size);
+                                               sec_key_packed_tuple);
         rocksdb::Slice secondary_key_slice((char*)sec_key_packed_tuple, 
                                            packed_size);
-        rocksdb::Slice value_slice((const char*)sec_key_tails, tail_size);
-        trx->changes.Put(key_descr[i], secondary_key_slice, value_slice);
+        rocksdb::Slice empty_slice;
+        trx->changes.Put(key_descr[i], secondary_key_slice, empty_slice);
       }
     }
   }
