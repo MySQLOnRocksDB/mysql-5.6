@@ -187,7 +187,12 @@ public:
     else
       return true;
   }
-  
+
+  uint32 get_index_number()
+  {
+    return index_number;
+  }
+
   /* Must only be called for secondary keys: */
   uint get_primary_key_tuple(RDBSE_KEYDEF *pk_descr, 
                              const rocksdb::Slice *key, char *pk_buffer);
