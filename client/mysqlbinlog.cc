@@ -2406,7 +2406,7 @@ static Exit_status dump_remote_log_entries(PRINT_EVENT_INFO *print_event_info,
     DBUG_RETURN(ERROR_STOP);
   }
   logname_len = tlen;
-  sprintf(cur_logname, logname);
+  strcpy(cur_logname, logname);
 
   init_semisync();
 
