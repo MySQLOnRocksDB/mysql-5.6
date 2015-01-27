@@ -719,7 +719,7 @@ dict_mem_index_add_field(
 					in a MySQL index like
 					INDEX (textcol(25)) */
 {
-  dict_mem_index_add_field(index, name, prefix_len, 0, NULL, 0);
+  dict_mem_index_add_field(index, name, prefix_len, 0, 0, 0);
 }
 
 #ifndef NAMES_SEP_CHAR
