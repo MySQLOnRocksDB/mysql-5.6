@@ -1616,13 +1616,6 @@ static void close_connections(void)
   if (get_thread_count() > 0)
     sleep(2);         // Give threads time to die
 
-#ifdef HAVE_MY_TIMER
-  if (have_statement_timeout == SHOW_OPTION_YES)
-    my_timer_deinitialize();
-
-  have_statement_timeout= SHOW_OPTION_DISABLED;
-#endif
-
   /*
     There's a small window in which the dump threads may miss getting
     woken up. Kick them one more time to make sure because close_connection()
@@ -2107,6 +2100,14 @@ void clean_up(bool print_message)
 
   if (THR_MALLOC)
     (void) pthread_key_delete(THR_MALLOC);
+
+#ifdef HAVE_MY_TIMER
+  if (have_statement_timeout == SHOW_OPTION_YES)
+    my_timer_deinitialize();
+
+  have_statement_timeout= SHOW_OPTION_DISABLED;
+#endif
+
 
   /*
     The following lines may never be executed as the main thread may have
