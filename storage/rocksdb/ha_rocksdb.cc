@@ -1728,6 +1728,11 @@ static int rocksdb_done_func(void *p)
   delete rdb;
   rdb= NULL;
 
+  // Disown the cache data since we're shutting down.
+  // This results in memory leaks but it improved the shutdown time.
+  if (table_options.block_cache) 
+    table_options.block_cache->DisownData();
+
   DBUG_RETURN(error);
 }
 
