@@ -439,6 +439,9 @@ public:
     This function skips over mem-comparable form.
   */
   index_field_skip_t skip_func;
+   
+  /* Number of field in the table */
+  int fieldnr;
 
   bool setup(Field *field);
 };
