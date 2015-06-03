@@ -1,4 +1,4 @@
-/* 
+/*
    Copyright (c) 2012,2013 Monty Program Ab
 
    This program is free software; you can redistribute it and/or modify
@@ -87,7 +87,7 @@ void thd_mark_transaction_to_rollback(MYSQL_THD thd, bool all);
   ROCKSDB_SHARE is a structure that will be shared among all open handlers.
   This example implements the minimum of what you will probably need.
 
-  //TODO: join this with RDBSE_TABLE_DEF ? 
+  //TODO: join this with RDBSE_TABLE_DEF ?
 */
 typedef struct st_rocksdb_share {
   char *table_name;
@@ -125,7 +125,7 @@ class ha_rocksdb: public handler
 {
   THR_LOCK_DATA lock;      ///< MySQL lock
   ROCKSDB_SHARE *share;    ///< Shared lock info
-  
+
   /* Iterator used for range scans and for full table/index scans */
   Apply_changes_iter *scan_it;
 
@@ -138,12 +138,12 @@ class ha_rocksdb: public handler
   RDBSE_KEYDEF **key_descr;
 
   bool check_keyread_allowed(uint inx, uint part, bool all_parts) const;
-  /* 
-    Number of key parts in PK. This is the same as 
+  /*
+    Number of key parts in PK. This is the same as
       table->key_info[table->s->primary_key].keyparts
   */
   uint pk_key_parts;
-  
+
   //Rdb_transaction *cur_trx;
 
   /*
@@ -154,7 +154,7 @@ class ha_rocksdb: public handler
   uchar *pk_tuple; /* Buffer for storing PK in KeyTupleFormat */
   uchar *pk_packed_tuple; /* Buffer for storing PK in StorageFormat */
   // ^^ todo: change it to 'char*'? TODO: ^ can we join this with last_rowkey?
-  
+
   /*
     Temporary buffers for storing the key part of the Key/Value pair
     for secondary indexes.
@@ -166,7 +166,7 @@ class ha_rocksdb: public handler
     is currently not used (always empty).
 
     TODO: why does ha_rocksdb::open() assume that an upper bound of the size of
-    this buffer is max_packed_sec_key_len? This is technically true currently, 
+    this buffer is max_packed_sec_key_len? This is technically true currently,
     but doesn't look meaningful.
   */
   uchar *sec_key_tails;
@@ -184,16 +184,16 @@ class ha_rocksdb: public handler
   /* Second buffers, used by UPDATE. */
   uchar *sec_key_packed_tuple_old;
   uchar *sec_key_tails_old;
-  
+
   /*
     Temporary space for packing VARCHARs (we provide it to
     pack_record()/pack_index_tuple() calls).
   */
   uchar *pack_buffer;
- 
+
   /* rowkey of the last record we've read, in StorageFormat. */
-  String last_rowkey; 
-  
+  String last_rowkey;
+
   /* Buffer used by convert_record_to_storage_format() */
   String storage_record;
 
@@ -205,20 +205,20 @@ class ha_rocksdb: public handler
     instead of rocksdb::Slice?
   */
   std::string retrieved_record;
-  
+
   /* If TRUE, reads should place locks on rows */
   bool lock_rows;
 
   /* Lock that we've placed on the row we've just read. */
   Row_lock *last_row_lock;
- 
+
   /* TRUE means we're doing an index-only read. FALSE means otherwise. */
   bool keyread_only;
-  
+
   bool skip_scan_it_next_call;
-  
+
   /*
-    Valid inside UPDATE statements, when updated_indexes_is_valid=true: 
+    Valid inside UPDATE statements, when updated_indexes_is_valid=true:
 
     This is a bitmap of indexes whose keys (in future, values) may be changed
     by this statement. Indexes that are not in the bitmap do not need to be
@@ -245,10 +245,10 @@ class ha_rocksdb: public handler
 
   void update_auto_incr_val();
   void load_auto_incr_value();
-  
+
   /* Idea copied from InnoDB's convert_error_code_to_mysql */
   int return_lock_failure(bool timed_out);
-  
+
   /*
     Descriptor telling how to decode/encode a field to on-disk record storage
     format. Not all information is in the structure yet, but eventually we
@@ -258,7 +258,7 @@ class ha_rocksdb: public handler
   */
   typedef struct st_field_encoder
   {
-    /* 
+    /*
       This is set to true for columns of Primary Key that can be decoded from
       their mem-comparable form.
       Since we can get them from the key part of RocksDB key->value pair, we
@@ -268,12 +268,12 @@ class ha_rocksdb: public handler
 
     uint null_offset;
     uchar null_mask;  // 0 means the field cannot be null
-    
+
     enum_field_types field_type;
 
     bool maybe_null() { return null_mask != 0; }
   } FIELD_ENCODER;
-  
+
   /*
     Array of table->s->fields elements telling how to store fields in the
     record.
@@ -287,7 +287,7 @@ class ha_rocksdb: public handler
   uint null_bytes_in_rec;
 
   void setup_field_converters();
-  
+
   // the buffer size should be at least 2*RDBSE_KEYDEF::INDEX_NUMBER_SIZE
   rocksdb::Range get_range(int i, uchar buf[]) const;
 
@@ -307,7 +307,7 @@ class ha_rocksdb: public handler
 public:
   ha_rocksdb(handlerton *hton, TABLE_SHARE *table_arg);
   ~ha_rocksdb() {}
-  
+
   /** @brief
     The name that will be used for display purposes.
    */
@@ -332,9 +332,9 @@ public:
         We are saying that this engine is just statement capable to have
         an engine that can only handle statement-based logging. This is
         used in testing.
-      HA_REC_NOT_IN_SEQ 
-        If we don't set it, filesort crashes, because it assumes rowids are 
-        1..8 byte numbers 
+      HA_REC_NOT_IN_SEQ
+        If we don't set it, filesort crashes, because it assumes rowids are
+        1..8 byte numbers
     */
     return HA_BINLOG_ROW_CAPABLE | HA_BINLOG_STMT_CAPABLE |
            HA_REC_NOT_IN_SEQ | HA_CAN_INDEX_BLOBS |
@@ -394,13 +394,13 @@ public:
     support indexes.
    */
   uint max_supported_key_length()    const { return 16*1024; /* just to return something*/ }
-  
+
   /* At the moment, we're ok with default handler::index_init() implementation. */
   int index_read_map(uchar * buf, const uchar * key,
                      key_part_map keypart_map,
                      enum ha_rkey_function find_flag);
-  
-  int index_read_last_map(uchar * buf, const uchar * key, 
+
+  int index_read_last_map(uchar * buf, const uchar * key,
                           key_part_map keypart_map);
 
   virtual double scan_time() { return (double) (stats.records+stats.deleted) / 20.0+10; }
