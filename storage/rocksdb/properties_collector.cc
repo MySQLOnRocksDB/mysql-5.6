@@ -10,6 +10,16 @@
 #include "rdb_datadic.h"
 #include "properties_collector.h"
 
+MyRocksTablePropertiesCollector::MyRocksTablePropertiesCollector(
+  Table_ddl_manager* ddl_manager,
+  CompactionCallback ccallback
+) :
+    ddl_manager_(ddl_manager), 
+    chunk_deleted_rows_(0l), max_chunk_deleted_rows_(0l),
+    compaction_callback_(ccallback) 
+{
+}
+
 /*
   This function is called by RocksDB for every key in the SST file
 */
@@ -39,6 +49,13 @@ MyRocksTablePropertiesCollector::AddUserKey(
     auto& stats = stats_.back();
     stats.data_size += key.size()+value.size();
     stats.rows++;
+    if (type == rocksdb::kEntryDelete) {
+      chunk_deleted_rows_++;
+    } else {
+      max_chunk_deleted_rows_ = std::max(chunk_deleted_rows_, 
+                                         max_chunk_deleted_rows_);
+      chunk_deleted_rows_ = 0;
+    }
     if (keydef_) {
       std::size_t column = 0;
       rocksdb::Slice last(last_key_.data(), last_key_.size());
@@ -55,11 +72,13 @@ MyRocksTablePropertiesCollector::AddUserKey(
         // if one of the first n-1 columns is different
         // If the n-1 prefix is the same, no sense in storing
         // the new key
-        if (column < stats.distinct_keys_per_prefix.size())
-          last_key_.assign(key.data(), key.size());        
+        if (column < stats.distinct_keys_per_prefix.size()) {
+          last_key_.assign(key.data(), key.size());
+        }
       }
     }
   }
+  file_size_ = file_size;
 
   return rocksdb::Status::OK();
 }
@@ -69,7 +88,7 @@ const char* MyRocksTablePropertiesCollector::INDEXSTATS_KEY = "__indexstats__";
 /*
   This function is called by RocksDB to compute properties to store in sst file
 */
-rocksdb::Status 
+rocksdb::Status
 MyRocksTablePropertiesCollector::Finish(
   rocksdb::UserCollectedProperties* properties
 ) {
@@ -77,7 +96,7 @@ MyRocksTablePropertiesCollector::Finish(
   changed_indexes.resize(stats_.size());
   std::transform(
     stats_.begin(), stats_.end(),
-    changed_indexes.begin(), 
+    changed_indexes.begin(),
     [](const IndexStats& s) {return s.index_number;}
   );
   ddl_manager_->add_changed_indexes(changed_indexes);
@@ -85,10 +104,17 @@ MyRocksTablePropertiesCollector::Finish(
   return rocksdb::Status::OK();
 }
 
+bool MyRocksTablePropertiesCollector::NeedCompact() const {
+  auto max_chunk_deleted_rows = std::max(chunk_deleted_rows_, 
+                                         max_chunk_deleted_rows_);
+  return compaction_callback_
+    && compaction_callback_(file_size_, max_chunk_deleted_rows);
+}
+
 /*
   Returns the same as above, but in human-readable way for logging
 */
-rocksdb::UserCollectedProperties 
+rocksdb::UserCollectedProperties
 MyRocksTablePropertiesCollector::GetReadableProperties() const {
   std::string s;
 #ifdef DBUG_OFF
@@ -99,7 +125,7 @@ MyRocksTablePropertiesCollector::GetReadableProperties() const {
   bool first = true;
   for (auto it : stats_) {
     if (first) {
-      first = false; 
+      first = false;
     } else {
       s.append(",");
     }
