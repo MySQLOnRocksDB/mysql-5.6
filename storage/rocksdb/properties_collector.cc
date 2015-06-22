@@ -12,18 +12,19 @@
 
 MyRocksTablePropertiesCollector::MyRocksTablePropertiesCollector(
   Table_ddl_manager* ddl_manager,
-  CompactionCallback ccallback
+  CompactionParams params
 ) :
-    ddl_manager_(ddl_manager), 
-    chunk_deleted_rows_(0l), max_chunk_deleted_rows_(0l),
-    compaction_callback_(ccallback) 
+    ddl_manager_(ddl_manager),
+    rows_(0l), deleted_rows_(0l), max_deleted_rows_(0l),
+    params_(params)
 {
+  deleted_rows_window_.resize(params_.window_, false);
 }
 
 /*
   This function is called by RocksDB for every key in the SST file
 */
-rocksdb::Status 
+rocksdb::Status
 MyRocksTablePropertiesCollector::AddUserKey(
     const rocksdb::Slice& key, const rocksdb::Slice& value,
     rocksdb::EntryType type, rocksdb::SequenceNumber seq,
@@ -36,9 +37,11 @@ MyRocksTablePropertiesCollector::AddUserKey(
       // starting a new table
       // add the new element into stats_
       stats_.push_back(IndexStats(index_number));
-      keydef_ = ddl_manager_->get_copy_of_keydef(index_number);
+      if (ddl_manager_) {
+        keydef_ = ddl_manager_->get_copy_of_keydef(index_number);
+      }
       if (keydef_) {
-        // resize the array to the number of columns. 
+        // resize the array to the number of columns.
         // It will be initialized with zeroes
         stats_.back().distinct_keys_per_prefix.resize(
           keydef_->get_m_key_parts());
@@ -49,20 +52,38 @@ MyRocksTablePropertiesCollector::AddUserKey(
     auto& stats = stats_.back();
     stats.data_size += key.size()+value.size();
     stats.rows++;
-    if (type == rocksdb::kEntryDelete) {
-      chunk_deleted_rows_++;
-    } else {
-      max_chunk_deleted_rows_ = std::max(chunk_deleted_rows_, 
-                                         max_chunk_deleted_rows_);
-      chunk_deleted_rows_ = 0;
+
+    if (params_.window_ > 0) {
+      // record the "is deleted" flag into the sliding window
+      // the sliding window is implemented as a circular buffer
+      // in deleted_rows_window_ vector
+      // the current position in the circular buffer is pointed at by
+      // rows_ % deleted_rows_window_.size()
+      // deleted_rows_ is the current number of 1's in the vector
+      // --update the counter for the element which will be overridden
+      if (deleted_rows_window_[rows_ % deleted_rows_window_.size()]) {
+        // correct the current number based on the element we about to override
+        deleted_rows_--;
+      }
+      // --override the element with the new value
+      deleted_rows_window_[rows_ % deleted_rows_window_.size()]
+        = (type == rocksdb::kEntryDelete);
+      // --update the counter
+      if (type == rocksdb::kEntryDelete) {
+        deleted_rows_++;
+      }
+      // --we are looking for the maximum deleted_rows_
+      max_deleted_rows_ = std::max(deleted_rows_, max_deleted_rows_);
     }
+    rows_++;
+
     if (keydef_) {
       std::size_t column = 0;
       rocksdb::Slice last(last_key_.data(), last_key_.size());
-      if (last_key_.empty() 
+      if (last_key_.empty()
           || (keydef_->compare_keys(&last, &key, &column) == 0)) {
         assert(column <= stats.distinct_keys_per_prefix.size());
-        for (std::size_t i=column; 
+        for (std::size_t i=column;
              i < stats.distinct_keys_per_prefix.size(); i++) {
           stats.distinct_keys_per_prefix[i]++;
         }
@@ -105,10 +126,11 @@ MyRocksTablePropertiesCollector::Finish(
 }
 
 bool MyRocksTablePropertiesCollector::NeedCompact() const {
-  auto max_chunk_deleted_rows = std::max(chunk_deleted_rows_, 
-                                         max_chunk_deleted_rows_);
-  return compaction_callback_
-    && compaction_callback_(file_size_, max_chunk_deleted_rows);
+  return
+    params_.deletes_ &&
+    (params_.window_ > 0) &&
+    (file_size_ > params_.file_size_) &&
+    (max_deleted_rows_ > params_.deletes_);
 }
 
 /*
@@ -202,7 +224,7 @@ std::string MyRocksTablePropertiesCollector::IndexStats::materialize(
       write_int64(&ret, num_keys);
     }
   }
-  
+
   return std::string((char*) ret.ptr(), ret.length());
 }
 
@@ -226,7 +248,7 @@ int MyRocksTablePropertiesCollector::IndexStats::unmaterialize(
        sizeof(stats.data_size)+
        sizeof(stats.rows)+
        sizeof(stats.approximate_size)+
-       sizeof(uint64) > p2) 
+       sizeof(uint64) > p2)
     {
       return 1;
     }
@@ -245,12 +267,12 @@ int MyRocksTablePropertiesCollector::IndexStats::unmaterialize(
     }
     ret.push_back(stats);
   }
-  
+
   return 0;
 }
 
 /*
-  Merges one IndexStats into another. Can be used to come up with the stats 
+  Merges one IndexStats into another. Can be used to come up with the stats
   for the index based on stats for each sst
 */
 void MyRocksTablePropertiesCollector::IndexStats::merge(const IndexStats& s) {
@@ -264,3 +286,4 @@ void MyRocksTablePropertiesCollector::IndexStats::merge(const IndexStats& s) {
     distinct_keys_per_prefix[i] += s.distinct_keys_per_prefix[i];
   }
 }
+
