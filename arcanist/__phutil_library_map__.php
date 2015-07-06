@@ -11,6 +11,7 @@ phutil_register_library_map(array(
   'class' =>
   array(
     'WebScaleSQLUnitTestEngine' => 'unit/WebScaleSQLUnitTestEngine.php',
+    'FacebookArcanistConfiguration' => 'config/FacebookArcanistConfiguration.php',
   ),
   'function' =>
   array(
