@@ -7,10 +7,40 @@ final class WebScaleSQLUnitTestEngine extends ArcanistBaseUnitTestEngine {
     // and return those results.
     if ($this->getEnableAsyncTests()) {
       $results = array();
-      $result = new ArcanistUnitTestResult();
-      $result->setName("mysql_build");
-      $result->setResult(ArcanistUnitTestResult::RESULT_POSTPONED);
-      $results[] = $result;
+      $buildTypes = array(
+        "Release",
+        "ASan",
+        "Debug"
+      );
+      $testSets = array(
+        "MixedOther",
+        "StressSerial",
+        "StressNoMem",
+        "PerfSchemaOther"
+      );
+      $pageSizes = array(
+        "16",
+        "32"
+      );
+      $clientModes = array(
+        "Sync",
+        "Async"
+      );
+      foreach ($buildTypes as $buildType) {
+        foreach ($testSets as $testSet) {
+          foreach ($pageSizes as $pageSize) {
+            foreach ($clientModes as $clientMode) {
+              if (!(($pageSize=="16" && $clientMode=="Sync")
+                    || ($pageSize=="32" && $clientMode=="Async"))) {
+                $result = new ArcanistUnitTestResult();
+                $result->setName("$buildType$testSet$pageSize$clientMode");
+                $result->setResult(ArcanistUnitTestResult::RESULT_POSTPONED);
+                $results[] = $result;
+              }
+            }
+          }
+        }
+      }
       return $results;
     }
   }
